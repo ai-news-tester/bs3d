@@ -2,6 +2,461 @@
 <html>
   <head>
     <meta charset="UTF-8" />
+    <title>Battleship 3D – Enhanced Fleet & Scoring</title>
+    <style>
+      /* Make sure the entire viewport is used */
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      /* Overlay for game info */
+      #overlay {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 10;
+        background: rgba(0, 0, 0, 0.6);
+        padding: 10px;
+        color: #fff;
+        font-family: sans-serif;
+        border-radius: 4px;
+      }
+      #overlay p {
+        margin: 5px 0;
+      }
+      /* Placement controls – only visible during placement phase */
+      #placementControls {
+        position: absolute;
+        top: 150px;
+        left: 10px;
+        z-index: 10;
+        background: rgba(0, 0, 0, 0.6);
+        padding: 10px;
+        color: #fff;
+        font-family: sans-serif;
+        border-radius: 4px;
+      }
+      #toggleOrientation,
+      #restartGame {
+        margin-top: 10px;
+        padding: 6px 12px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Overlay with game status, score, and win count -->
+    <div id="overlay">
+      <p id="turnIndicator">Turn: —</p>
+      <p id="scoreDisplay">Score: 0</p>
+      <p id="wins">Wins: 0</p>
+      <p id="message"></p>
+      <button id="restartGame" style="display: none;">Restart Game</button>
+    </div>
+    <!-- Placement controls (shown during the placement phase) -->
+    <div id="placementControls">
+      <p id="placementInstruction"></p>
+      <button id="toggleOrientation">Toggle Orientation</button>
+    </div>
+
+    <!-- Load Three.js and GSAP from CDNs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.6.1/gsap.min.js"></script>
+
+    <script>
+      /**************** Global Variables and Setup ****************/
+      const boardSize = 10;
+      const cellSize = 1;
+      // Improved fleet: 7 ships
+      const shipsToPlace = [
+        { name: "Carrier", length: 5 },
+        { name: "Battleship", length: 4 },
+        { name: "Cruiser", length: 3 },
+        { name: "Submarine", length: 3 },
+        { name: "Destroyer", length: 2 },
+        { name: "Patrol Boat", length: 2 },
+        { name: "Scout Ship", length: 1 }
+      ];
+      let currentShipIndex = 0;
+      let currentOrientation = "H"; // "H" or "V"
+      let placementPhase = true;
+      // Total ship cells on player's board
+      let playerShipParts = shipsToPlace.reduce((sum, s) => sum + s.length, 0);
+      // AI ship total cells will be computed after placement.
+      let aiShipParts = 0;
+      // During gameplay, currentTurn = "player" or "ai"
+      let currentTurn = null;
+      // Boards for player and AI
+      let playerBoard = [];
+      let aiBoard = [];
+      // Three.js variables
+      let scene, camera, renderer, raycaster;
+      let playerGroup, aiGroup;
+      // Scoring variables
+      let playerScore = 0;
+      let currentMove = 0; // number of player's attack moves
+      // For AI ships, store an object per ship for bonus scoring.
+      let aiShips = [];
+      // Wins counter is stored in localStorage.
+      let winsCount = localStorage.getItem("wins")
+        ? parseInt(localStorage.getItem("wins"))
+        : 0;
+
+      /**************** Utility Functions ****************/
+      function updateOverlay() {
+        if (placementPhase) {
+          const ship = shipsToPlace[currentShipIndex];
+          document.getElementById("placementInstruction").innerText =
+            "Place your " +
+            ship.name +
+            " (length: " +
+            ship.length +
+            ") - Orientation: " +
+            (currentOrientation === "H" ? "Horizontal" : "Vertical");
+          document.getElementById("turnIndicator").innerText = "Placement Phase";
+        } else {
+          document.getElementById("turnIndicator").innerText =
+            "Turn: " + (currentTurn === "player" ? "Player" : "AI");
+        }
+        document.getElementById("scoreDisplay").innerText =
+          "Score: " + playerScore;
+        document.getElementById("wins").innerText = "Wins: " + winsCount;
+      }
+
+      function saveWins() {
+        localStorage.setItem("wins", winsCount);
+      }
+
+      function showMessage(msg) {
+        document.getElementById("message").innerText = msg;
+      }
+
+      function endGame(victory) {
+        currentTurn = null; // disable further actions
+        if (victory) {
+          winsCount++;
+          saveWins();
+          showMessage("Victory! You beat the AI.");
+        } else {
+          showMessage("Defeat! The AI wins.");
+        }
+        document.getElementById("restartGame").style.display = "inline-block";
+      }
+
+      function restartGame() {
+        window.location.reload();
+      }
+
+      /**************** Board Initialization ****************/
+      function initBoard(board) {
+        for (let i = 0; i < boardSize; i++) {
+          board[i] = [];
+          for (let j = 0; j < boardSize; j++) {
+            board[i][j] = {
+              shipId: null,
+              hit: false,
+              mesh: null,
+              row: i,
+              col: j
+            };
+          }
+        }
+      }
+
+      /**************** Ship Placement Validation ****************/
+      // Returns an array of cell positions if a ship of a given length can be placed at row,col in the given orientation.
+      function getShipCellsIfValid(board, row, col, orientation, shipLength) {
+        let cells = [];
+        for (let i = 0; i < shipLength; i++) {
+          let r = row,
+            c = col;
+          if (orientation === "H") {
+            c = col + i;
+          } else {
+            r = row + i;
+          }
+          if (r < 0 || r >= boardSize || c < 0 || c >= boardSize) return null; // out of bounds
+          if (board[r][c].shipId !== null) return null; // already occupied
+          cells.push({ r, c });
+        }
+        // Ensure none of the cells (or any adjacent cell, including diagonals) touches an existing ship.
+        for (let cell of cells) {
+          for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+              let rr = cell.r + dr;
+              let cc = cell.c + dc;
+              if (rr < 0 || rr >= boardSize || cc < 0 || cc >= boardSize) continue;
+              if (!cells.some((c) => c.r === rr && c.c === cc) && board[rr][cc].shipId !== null) {
+                return null;
+              }
+            }
+          }
+        }
+        return cells;
+      }
+
+      // Place ship cells on board and update visuals.
+      function placeShip(board, cells, shipId, group, boardType) {
+        for (let cell of cells) {
+          board[cell.r][cell.c].shipId = shipId;
+          if (boardType === "player") {
+            board[cell.r][cell.c].mesh.material.color.set(0x00aa00);
+          }
+        }
+      }
+
+      /**************** Three.js Scene Setup ****************/
+      function initScene() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1e90ff);
+        camera = new THREE.PerspectiveCamera(
+          75,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          1000
+        );
+        camera.position.set(0, 25, 25);
+        camera.lookAt(0, 0, 0);
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        raycaster = new THREE.Raycaster();
+        playerGroup = new THREE.Group();
+        aiGroup = new THREE.Group();
+        // Position player's board to the left, AI's board to the right.
+        playerGroup.position.x = -7;
+        aiGroup.position.x = 7;
+        scene.add(playerGroup);
+        scene.add(aiGroup);
+        let ambient = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambient);
+        window.addEventListener("resize", () => {
+          camera.aspect = window.innerWidth / window.innerHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+      }
+
+      // Create the visual grid for a board.
+      function createBoardVisuals(board, group) {
+        const geometry = new THREE.PlaneGeometry(cellSize * 0.9, cellSize * 0.9);
+        for (let i = 0; i < boardSize; i++) {
+          for (let j = 0; j < boardSize; j++) {
+            let material = new THREE.MeshBasicMaterial({
+              color: 0xdddddd,
+              side: THREE.DoubleSide
+            });
+            let cellMesh = new THREE.Mesh(geometry, material);
+            cellMesh.rotation.x = -Math.PI / 2;
+            cellMesh.position.x = i - boardSize / 2 + cellSize / 2;
+            cellMesh.position.z = j - boardSize / 2 + cellSize / 2;
+            cellMesh.userData = { row: i, col: j };
+            board[i][j].mesh = cellMesh;
+            group.add(cellMesh);
+          }
+        }
+      }
+
+      /**************** Ship Placement – Player Interaction ****************/
+      function toggleOrientation() {
+        currentOrientation = currentOrientation === "H" ? "V" : "H";
+        updateOverlay();
+      }
+
+      // Player clicks on their board to place a ship.
+      function onPlayerPlacementClick(event) {
+        if (!placementPhase) return;
+        const mouse = new THREE.Vector2();
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(playerGroup.children);
+        if (intersects.length > 0) {
+          let cellMesh = intersects[0].object;
+          let row = cellMesh.userData.row;
+          let col = cellMesh.userData.col;
+          let ship = shipsToPlace[currentShipIndex];
+          let cells = getShipCellsIfValid(playerBoard, row, col, currentOrientation, ship.length);
+          if (cells) {
+            placeShip(playerBoard, cells, currentShipIndex, playerGroup, "player");
+            currentShipIndex++;
+            if (currentShipIndex >= shipsToPlace.length) {
+              placementPhase = false;
+              window.removeEventListener("click", onPlayerPlacementClick, false);
+              document.getElementById("placementControls").style.display = "none";
+              // After placement, have AI place ships.
+              aiRandomPlacement();
+              currentTurn = "player";
+              showMessage("All ships placed. Game start!");
+              updateOverlay();
+              // Now listen for player's attacks on AI board.
+              window.addEventListener("click", onPlayerAttack, false);
+            } else {
+              updateOverlay();
+            }
+          } else {
+            showMessage("Invalid placement. Ensure the ship fits and isn't adjacent to another.");
+          }
+        }
+      }
+
+      /**************** AI Ship Placement ****************/
+      function aiRandomPlacement() {
+        let shipId = 0;
+        aiShips = [];
+        for (let ship of shipsToPlace) {
+          let placed = false;
+          while (!placed) {
+            let orientation = Math.random() < 0.5 ? "H" : "V";
+            let row = Math.floor(Math.random() * boardSize);
+            let col = Math.floor(Math.random() * boardSize);
+            let cells = getShipCellsIfValid(aiBoard, row, col, orientation, ship.length);
+            if (cells) {
+              placeShip(aiBoard, cells, shipId, aiGroup, "ai");
+              aiShips[shipId] = {
+                name: ship.name,
+                length: ship.length,
+                hits: 0,
+                firstHitMove: null,
+                sunk: false
+              };
+              shipId++;
+              placed = true;
+            }
+          }
+        }
+        aiShipParts = shipsToPlace.reduce((sum, s) => sum + s.length, 0);
+      }
+
+      /**************** Gameplay – Attacking Phase (vs. AI) ****************/
+      function onPlayerAttack(event) {
+        if (currentTurn !== "player") return;
+        const mouse = new THREE.Vector2();
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(aiGroup.children);
+        if (intersects.length > 0) {
+          let cellMesh = intersects[0].object;
+          let row = cellMesh.userData.row;
+          let col = cellMesh.userData.col;
+          let cellData = aiBoard[row][col];
+          if (cellData.hit) return;
+          cellData.hit = true;
+          currentMove++; // increment player's move count for scoring
+          if (cellData.shipId !== null) {
+            cellMesh.material.color.set(0xff0000);
+            playerScore += 10; // base 10 points per hit
+            let shipData = aiShips[cellData.shipId];
+            if (shipData.firstHitMove === null) {
+              shipData.firstHitMove = currentMove;
+            }
+            shipData.hits++;
+            if (shipData.hits === shipData.length && !shipData.sunk) {
+              shipData.sunk = true;
+              let turnsTaken = currentMove - shipData.firstHitMove + 1;
+              // Bonus: larger ships sunk faster get more bonus.
+              let bonus = Math.round((shipData.length / turnsTaken) * shipData.length * 50);
+              playerScore += bonus;
+              showMessage("You sunk " + shipData.name + "! Bonus: " + bonus);
+            }
+            aiShipParts--;
+            gsap.to(cellMesh.scale, {
+              x: 1.5,
+              y: 1.5,
+              z: 1.5,
+              duration: 0.3,
+              yoyo: true,
+              repeat: 1
+            });
+          } else {
+            cellMesh.material.color.set(0x0000ff);
+          }
+          if (aiShipParts <= 0) {
+            updateOverlay();
+            endGame(true);
+          } else {
+            currentTurn = "ai";
+            updateOverlay();
+            setTimeout(aiTurn, 1000);
+          }
+          updateOverlay();
+        }
+      }
+
+      // AI randomly selects an unhit cell on the player's board to attack.
+      function aiTurn() {
+        let available = [];
+        for (let i = 0; i < boardSize; i++) {
+          for (let j = 0; j < boardSize; j++) {
+            if (!playerBoard[i][j].hit) {
+              available.push({ i, j });
+            }
+          }
+        }
+        if (available.length === 0) return;
+        let choice = available[Math.floor(Math.random() * available.length)];
+        let cellData = playerBoard[choice.i][choice.j];
+        cellData.hit = true;
+        let cellMesh = cellData.mesh;
+        if (cellData.shipId !== null) {
+          cellMesh.material.color.set(0xff0000);
+          playerShipParts--;
+          gsap.to(cellMesh.scale, {
+            x: 1.5,
+            y: 1.5,
+            z: 1.5,
+            duration: 0.3,
+            yoyo: true,
+            repeat: 1
+          });
+        } else {
+          cellMesh.material.color.set(0x0000ff);
+        }
+        if (playerShipParts <= 0) {
+          updateOverlay();
+          endGame(false);
+        } else {
+          currentTurn = "player";
+          updateOverlay();
+        }
+      }
+
+      /**************** Main Animation Loop ****************/
+      function animate() {
+        requestAnimationFrame(animate);
+        renderer.render(scene, camera);
+      }
+
+      /**************** Initialization ****************/
+      function initGame() {
+        initBoard(playerBoard);
+        initBoard(aiBoard);
+        initScene();
+        createBoardVisuals(playerBoard, playerGroup);
+        createBoardVisuals(aiBoard, aiGroup);
+        placementPhase = true;
+        currentTurn = "placement";
+        updateOverlay();
+        window.addEventListener("click", onPlayerPlacementClick, false);
+      }
+
+      // Wire up buttons for orientation toggling and restarting the game.
+      document.getElementById("toggleOrientation").addEventListener("click", toggleOrientation);
+      document.getElementById("restartGame").addEventListener("click", restartGame);
+
+      // Start the game.
+      initGame();
+      animate();
+      console.log("Game initialized. Place your ships on the left board.");
+    </script>
+  </body>
+</html>
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
     <title>Battleship 3D - Manual Placement vs. AI</title>
     <!-- Optional external CSS if desired can be placed in css/style.css -->
     <style>
