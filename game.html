@@ -264,3 +264,80 @@
 
       // AI randomly selects a cell on the player's board.
       function aiTurn() {
+        // Gather list of available (not hit) cells.
+        let available = [];
+        for (let i = 0; i < boardSize; i++) {
+          for (let j = 0; j < boardSize; j++) {
+            if (!playerBoard[i][j].hit) {
+              available.push({ i, j });
+            }
+          }
+        }
+        if (available.length === 0) return; // should not happen
+
+        const choice = available[Math.floor(Math.random() * available.length)];
+        const cellData = playerBoard[choice.i][choice.j];
+        cellData.hit = true;
+        const cell = cellData.mesh;
+        if (cellData.ship) {
+          cell.material.color.set(0xff0000);
+          playerShipRemaining--;
+          gsap.to(cell.scale, {
+            x: 1.5,
+            y: 1.5,
+            z: 1.5,
+            duration: 0.3,
+            yoyo: true,
+            repeat: 1,
+          });
+        } else {
+          cell.material.color.set(0x0000ff);
+        }
+        // Check for defeat.
+        if (playerShipRemaining <= 0) {
+          updateOverlay();
+          endGame(false);
+        } else {
+          currentTurn = "player";
+          updateOverlay();
+        }
+      }
+
+      /* ----- MAIN ANIMATION LOOP ----- */
+      function animate() {
+        requestAnimationFrame(animate);
+        renderer.render(scene, camera);
+      }
+
+      /* ----- INITIALIZATION ----- */
+      function initGame() {
+        // Initialize boards
+        initBoard(playerBoard);
+        initBoard(aiBoard);
+        placeShipsRandomly(playerBoard);
+        placeShipsRandomly(aiBoard);
+
+        // Initialize Three.js scene
+        initScene();
+        createBoardVisuals(playerBoard, playerGroup, "player");
+        createBoardVisuals(aiBoard, aiGroup, "ai");
+
+        updateOverlay();
+
+        // Add event listener for player clicks on AI board
+        window.addEventListener("click", onPlayerClick, false);
+
+        animate();
+      }
+
+      /* ----- SETUP RESTART BUTTON ----- */
+      document.getElementById("restartGame").addEventListener("click", () => {
+        restartGame();
+      });
+
+      // Start the game.
+      initGame();
+      console.log("Game initialized. Player's turn: " + currentTurn);
+    </script>
+  </body>
+</html>
