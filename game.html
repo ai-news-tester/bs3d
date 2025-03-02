@@ -34,7 +34,7 @@
     </style>
   </head>
   <body>
-    <!-- Overlay displays turn indicator, wins count, messages and a restart button -->
+    <!-- Overlay displays turn indicator, wins counter, messages and a restart button -->
     <div id="overlay">
       <p id="turnIndicator">Turn: Player</p>
       <p id="wins">Wins: 0</p>
@@ -42,7 +42,7 @@
       <button id="restartGame" style="display: none;">Restart Game</button>
     </div>
 
-    <!-- We'll use Three.js (and optionally GSAP) for our 3D graphics -->
+    <!-- Load Three.js and GSAP from CDNs -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.6.1/gsap.min.js"></script>
 
@@ -59,11 +59,11 @@
       let playerBoard = []; // 2D array for player's board
       let aiBoard = []; // 2D array for AI board
 
-      // We'll store the Three.js meshes (cells) in groups for each board.
+      // Three.js groups representing the visual boards:
       let playerGroup, aiGroup;
       let scene, camera, renderer, raycaster;
 
-      // Scoreboard (persistent wins count from localStorage)
+      // Wins counter is stored in localStorage (persistent across reloads)
       let winsCount = localStorage.getItem("wins")
         ? parseInt(localStorage.getItem("wins"))
         : 0;
@@ -76,268 +76,4 @@
       }
 
       function saveWins() {
-        localStorage.setItem("wins", winsCount);
-      }
-
-      function showMessage(text) {
-        document.getElementById("message").innerText = text;
-      }
-
-      function endGame(victory) {
-        // Disable further clicks by setting turn to null.
-        currentTurn = null;
-        if (victory) {
-          winsCount++;
-          saveWins();
-          showMessage("Victory! You have beaten the AI.");
-        } else {
-          showMessage("Defeat! AI has beaten you.");
-        }
-        document.getElementById("restartGame").style.display = "inline-block";
-      }
-
-      function restartGame() {
-        // Simply reload the page
-        window.location.reload();
-      }
-
-      /* ----- INITIALIZE BOARDS ----- */
-      function initBoard(boardArray) {
-        // Create a 2D boardSize x boardSize array.
-        for (let i = 0; i < boardSize; i++) {
-          boardArray[i] = [];
-          for (let j = 0; j < boardSize; j++) {
-            boardArray[i][j] = {
-              ship: false,
-              hit: false,
-              mesh: null,
-              row: i,
-              col: j,
-            };
-          }
-        }
-      }
-
-      function placeShipsRandomly(boardArray) {
-        let placed = 0;
-        while (placed < numShips) {
-          const i = Math.floor(Math.random() * boardSize);
-          const j = Math.floor(Math.random() * boardSize);
-          if (!boardArray[i][j].ship) {
-            boardArray[i][j].ship = true;
-            placed++;
-          }
-        }
-      }
-
-      /* ----- THREE.JS INITIALIZATION ----- */
-      function initScene() {
-        console.log("Initializing scene...");
-        scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x1e90ff); // blue background
-
-        camera = new THREE.PerspectiveCamera(
-          75,
-          window.innerWidth / window.innerHeight,
-          0.1,
-          1000
-        );
-        camera.position.set(0, 20, 20);
-        camera.lookAt(0, 0, 0);
-
-        renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-
-        raycaster = new THREE.Raycaster();
-
-        // Create two groups: one for the player's board and one for the AI board.
-        playerGroup = new THREE.Group();
-        aiGroup = new THREE.Group();
-        // Offset the groups so that they're side by side.
-        playerGroup.position.x = -7;
-        aiGroup.position.x = 7;
-        scene.add(playerGroup);
-        scene.add(aiGroup);
-
-        // Add ambient light.
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-        scene.add(ambientLight);
-
-        window.addEventListener("resize", onWindowResize, false);
-      }
-
-      function onWindowResize() {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-      }
-
-      /* ----- CREATE THE BOARDS ----- */
-      function createBoardVisuals(boardArray, group, boardType) {
-        // The boardType is either "player" or "ai"
-        const geometry = new THREE.PlaneGeometry(cellSize * 0.9, cellSize * 0.9);
-        for (let i = 0; i < boardSize; i++) {
-          for (let j = 0; j < boardSize; j++) {
-            // Choose initial color:
-            // For AI board, default grey.
-            // For player's board, if there is a ship, show green; if not, light grey.
-            let color;
-            if (boardType === "player") {
-              color = boardArray[i][j].ship ? 0x00aa00 : 0xdddddd;
-            } else {
-              color = 0xdddddd;
-            }
-            const material = new THREE.MeshBasicMaterial({
-              color: color,
-              side: THREE.DoubleSide,
-            });
-            const cell = new THREE.Mesh(geometry, material);
-            cell.rotation.x = -Math.PI / 2;
-            // Center board around origin: shift by boardSize/2.
-            cell.position.x = i - boardSize / 2 + cellSize / 2;
-            cell.position.z = j - boardSize / 2 + cellSize / 2;
-            // Store extra info in userData.
-            cell.userData = {
-              row: i,
-              col: j,
-              board: boardType, // "player" or "ai"
-            };
-            boardArray[i][j].mesh = cell;
-            group.add(cell);
-          }
-        }
-      }
-
-      /* ----- GAME LOGIC ----- */
-      // Process a player click on the AI board.
-      function onPlayerClick(event) {
-        // Only process if it's player's turn.
-        if (currentTurn !== "player") return;
-
-        // Calculate mouse position in normalized device coordinates.
-        const mouse = new THREE.Vector2();
-        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-        raycaster.setFromCamera(mouse, camera);
-        // Only check intersections with AI board cells.
-        const intersects = raycaster.intersectObjects(aiGroup.children);
-        if (intersects.length > 0) {
-          const cell = intersects[0].object;
-          const row = cell.userData.row;
-          const col = cell.userData.col;
-          const cellData = aiBoard[row][col];
-          // If already hit, ignore.
-          if (cellData.hit) return;
-
-          cellData.hit = true;
-          if (cellData.ship) {
-            // Hit ship: mark red.
-            cell.material.color.set(0xff0000);
-            aiShipRemaining--;
-            // Animate explosion (using GSAP) for effect.
-            gsap.to(cell.scale, {
-              x: 1.5,
-              y: 1.5,
-              z: 1.5,
-              duration: 0.3,
-              yoyo: true,
-              repeat: 1,
-            });
-          } else {
-            // Miss: mark blue.
-            cell.material.color.set(0x0000ff);
-          }
-          // Check for win.
-          if (aiShipRemaining <= 0) {
-            updateOverlay();
-            endGame(true);
-          } else {
-            // Switch turn to AI.
-            currentTurn = "ai";
-            updateOverlay();
-            setTimeout(aiTurn, 1000);
-          }
-        }
-      }
-
-      // AI randomly selects a cell on the player's board.
-      function aiTurn() {
-        // Gather list of available (not hit) cells.
-        let available = [];
-        for (let i = 0; i < boardSize; i++) {
-          for (let j = 0; j < boardSize; j++) {
-            if (!playerBoard[i][j].hit) {
-              available.push({ i, j });
-            }
-          }
-        }
-        if (available.length === 0) return; // should not happen
-
-        const choice = available[Math.floor(Math.random() * available.length)];
-        const cellData = playerBoard[choice.i][choice.j];
-        cellData.hit = true;
-        const cell = cellData.mesh;
-        if (cellData.ship) {
-          cell.material.color.set(0xff0000);
-          playerShipRemaining--;
-          gsap.to(cell.scale, {
-            x: 1.5,
-            y: 1.5,
-            z: 1.5,
-            duration: 0.3,
-            yoyo: true,
-            repeat: 1,
-          });
-        } else {
-          cell.material.color.set(0x0000ff);
-        }
-        // Check for defeat.
-        if (playerShipRemaining <= 0) {
-          updateOverlay();
-          endGame(false);
-        } else {
-          currentTurn = "player";
-          updateOverlay();
-        }
-      }
-
-      /* ----- MAIN ANIMATION LOOP ----- */
-      function animate() {
-        requestAnimationFrame(animate);
-        renderer.render(scene, camera);
-      }
-
-      /* ----- INITIALIZATION ----- */
-      function initGame() {
-        // Initialize boards
-        initBoard(playerBoard);
-        initBoard(aiBoard);
-        placeShipsRandomly(playerBoard);
-        placeShipsRandomly(aiBoard);
-
-        // Initialize Three.js scene
-        initScene();
-        createBoardVisuals(playerBoard, playerGroup, "player");
-        createBoardVisuals(aiBoard, aiGroup, "ai");
-
-        updateOverlay();
-
-        // Add event listener for player clicks on AI board
-        window.addEventListener("click", onPlayerClick, false);
-
-        animate();
-      }
-
-      /* ----- SETUP RESTART BUTTON ----- */
-      document.getElementById("restartGame").addEventListener("click", () => {
-        restartGame();
-      });
-
-      // Start the game.
-      initGame();
-      console.log("Game initialized. Player's turn: " + currentTurn);
-    </script>
-  </body>
-</html>
+        localStorage.setItem("wins
