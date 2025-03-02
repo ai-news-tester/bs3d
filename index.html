@@ -72,12 +72,15 @@
       
       // Fleet definition using standard Battleship ships.
       const shipsToPlace = [
-        { name: "Carrier", length: 5 },
-        { name: "Battleship", length: 4 },
-        { name: "Cruiser", length: 3 },
-        { name: "Submarine", length: 3 },
-        { name: "Destroyer", length: 2 }
-      ];
+  { name: "Carrier", length: 5 },
+  { name: "Battleship", length: 4 },
+  { name: "Cruiser", length: 3 },
+  { name: "Submarine", length: 3 },
+  { name: "Destroyer", length: 2 },
+  { name: "Patrol Boat", length: 2 },
+  { name: "Scout Ship", length: 1 } // Optional extra 1-length ship
+];
+
       
       let currentShipIndex = 0; // which ship the player is placing
       let currentOrientation = "H"; // "H" (horizontal) or "V" (vertical)
